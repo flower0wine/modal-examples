@@ -62,6 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable reference voice cloning and use random voice.",
     )
+    parser.add_argument(
+        "--latency",
+        choices=["normal", "balanced"],
+        default="balanced",
+        help="Fish Speech latency mode. balanced is faster; normal favors quality.",
+    )
     return parser
 
 
@@ -94,7 +100,7 @@ def main() -> None:
     payload = {
         "text": args.prompt,
         "format": "wav",
-        "latency": "normal",
+        "latency": args.latency,
         "streaming": False,
         "normalize": True,
         "references": build_reference(args),

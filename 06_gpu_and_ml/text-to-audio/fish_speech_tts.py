@@ -13,6 +13,7 @@ Notes:
 - By default this uses Fish Audio's current flagship open-weights model: `fishaudio/s2-pro`.
 - The first run downloads model weights into a Modal Volume and can take a while.
 - Fish Audio's official docs recommend at least 24 GB of VRAM for S2 inference.
+- Set `FISH_SPEECH_COMPILE=1` to trade much slower cold starts for faster warm inference.
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ GPU_TYPE = "L40S"
 MODEL_REPO = os.environ.get("FISH_SPEECH_MODEL_REPO", "fishaudio/s2-pro")
 MODEL_SLUG = MODEL_REPO.split("/")[-1]
 MODEL_DIR = f"/models/{MODEL_SLUG}"
+TORCHINDUCTOR_CACHE_DIR = f"/models/{MODEL_SLUG}-torchinductor-cache"
+ENABLE_COMPILE = os.environ.get("FISH_SPEECH_COMPILE", "0") == "1"
+ENABLE_HALF = os.environ.get("FISH_SPEECH_HALF", "1") != "0"
+FISH_SPEECH_PYTHON = "/app/.venv/bin/python"
 APP_NAME = f"fish-speech-{MODEL_SLUG}-demo"
 
 app = modal.App(APP_NAME)
@@ -48,6 +53,7 @@ image = (
         {
             "HF_HUB_ENABLE_HF_TRANSFER": "1",
             "PYTHONUNBUFFERED": "1",
+            "TORCHINDUCTOR_CACHE_DIR": TORCHINDUCTOR_CACHE_DIR,
         }
     )
 )
@@ -96,20 +102,28 @@ def serve():
             "Run download_model first."
         )
 
+    server_args = [
+        f"{FISH_SPEECH_PYTHON} tools/api_server.py",
+        f"--listen 0.0.0.0:{API_PORT}",
+        f"--llama-checkpoint-path {MODEL_DIR}",
+        f"--decoder-checkpoint-path {MODEL_DIR}/codec.pth",
+        "--decoder-config-name modded_dac_vq",
+    ]
+    if ENABLE_COMPILE:
+        server_args.append("--compile")
+    if ENABLE_HALF:
+        server_args.append("--half")
+
     cmd = [
         "/bin/bash",
         "-lc",
-        (
-            "cd /app && "
-            "uv run tools/api_server.py "
-            f"--listen 0.0.0.0:{API_PORT} "
-            f"--llama-checkpoint-path {MODEL_DIR} "
-            f"--decoder-checkpoint-path {MODEL_DIR}/codec.pth "
-            "--decoder-config-name modded_dac_vq"
-        ),
+        "cd /app && " + " ".join(server_args),
     ]
 
-    print(f"Starting Fish Speech server for {MODEL_REPO} on port {API_PORT}")
+    print(
+        f"Starting Fish Speech server for {MODEL_REPO} on port {API_PORT} "
+        f"(compile={ENABLE_COMPILE}, half={ENABLE_HALF})"
+    )
     subprocess.Popen(cmd)
 
 
@@ -199,7 +213,7 @@ def test(
         {
             "text": prompt,
             "format": "wav",
-            "latency": "normal",
+            "latency": "balanced",
             "streaming": False,
             "normalize": True,
             "references": references,
